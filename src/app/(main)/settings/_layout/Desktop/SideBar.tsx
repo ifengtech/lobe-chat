@@ -1,47 +1,42 @@
 'use client';
 
-import { createStyles, useResponsive } from 'antd-style';
-import { memo } from 'react';
+import { createStyles } from 'antd-style';
 import { useTranslation } from 'react-i18next';
-import { Flexbox } from 'react-layout-kit';
+import { Flexbox, FlexboxProps } from 'react-layout-kit';
 
-import { useActiveSettingsKey } from '@/hooks/useActiveSettingsKey';
+import BrandWatermark from '@/components/BrandWatermark';
+import PanelTitle from '@/components/PanelTitle';
 
-import SettingList from '../../features/SettingList';
-import UpgradeAlert from '../../features/UpgradeAlert';
-
-const useStyles = createStyles(({ stylish, token, css }) => ({
-  body: stylish.noScrollbar,
+const useStyles = createStyles(({ token, css }) => ({
   container: css`
+    padding-block: 0 16px;
+    padding-inline: 12px;
+    background: ${token.colorBgContainer};
     border-inline-end: 1px solid ${token.colorBorder};
-  `,
-  logo: css`
-    fill: ${token.colorText};
-  `,
-  top: css`
-    font-size: 20px;
-    font-weight: bold;
   `,
 }));
 
-const SideBar = memo(() => {
-  const { styles } = useStyles();
-  const activeKey = useActiveSettingsKey();
+interface SidebarLayoutProps extends FlexboxProps {
+  desc?: string;
+  title?: string;
+}
 
-  const { t } = useTranslation('common');
-  const { mobile } = useResponsive();
-
+const SidebarLayout = ({ children, className, title, desc, ...rest }: SidebarLayoutProps) => {
+  const { cx, styles } = useStyles();
+  const { t } = useTranslation('setting');
   return (
-    <Flexbox className={styles.container} width={280}>
-      <Flexbox className={styles.top} padding={16}>
-        {t('setting')}
-      </Flexbox>
-      <Flexbox gap={8} style={{ paddingInline: 8 }}>
-        <UpgradeAlert />
-        <SettingList activeTab={activeKey} mobile={mobile} />
-      </Flexbox>
+    <Flexbox
+      className={cx(styles.container, className)}
+      flex={'none'}
+      gap={20}
+      width={280}
+      {...rest}
+    >
+      <PanelTitle desc={desc || t('header.desc')} title={title || t('header.title')} />
+      {children}
+      <BrandWatermark paddingInline={12} />
     </Flexbox>
   );
-});
+};
 
-export default SideBar;
+export default SidebarLayout;

@@ -1,26 +1,22 @@
-import { LobePluginType } from '@lobehub/chat-plugin-sdk';
-import { t } from 'i18next';
-
-import { DEFAULT_INBOX_AVATAR, DEFAULT_USER_AVATAR } from '@/const/meta';
+import { DEFAULT_USER_AVATAR } from '@/const/meta';
 import { INBOX_SESSION_ID } from '@/const/session';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/selectors';
+import { messageMapKey } from '@/store/chat/utils/messageMapKey';
 import { useSessionStore } from '@/store/session';
 import { sessionMetaSelectors } from '@/store/session/selectors';
 import { useUserStore } from '@/store/user';
-import { commonSelectors } from '@/store/user/selectors';
-import { ChatMessage } from '@/types/message';
-import { MetaData } from '@/types/meta';
-import { merge } from '@/utils/merge';
+import { userProfileSelectors } from '@/store/user/selectors';
+import { ChatFileItem, ChatMessage } from '@/types/message';
 
 import { chatHelpers } from '../../helpers';
-import type { ChatStore } from '../../store';
+import type { ChatStoreState } from '../../initialState';
 
 const getMeta = (message: ChatMessage) => {
   switch (message.role) {
     case 'user': {
       return {
-        avatar: commonSelectors.userAvatar(useUserStore.getState()) || DEFAULT_USER_AVATAR,
+        avatar: userProfileSelectors.userAvatar(useUserStore.getState()) || DEFAULT_USER_AVATAR,
       };
     }
 
@@ -28,123 +24,193 @@ const getMeta = (message: ChatMessage) => {
       return message.meta;
     }
 
-    case 'assistant': {
+    default: {
       return sessionMetaSelectors.currentAgentMeta(useSessionStore.getState());
-    }
-
-    case 'function': {
-      // TODO: 后续改成将 plugin metadata 写入 message metadata 的方案
-      return {
-        avatar: '🧩',
-        title: 'plugin-unknown',
-      };
     }
   }
 };
 
-const currentChatKey = (s: ChatStore) => `${s.activeId}_${s.activeTopicId}`;
+const currentChatKey = (s: ChatStoreState) => messageMapKey(s.activeId, s.activeTopicId);
 
-// 当前激活的消息列表
-const currentChats = (s: ChatStore): ChatMessage[] => {
+/**
+ * Current active raw message list, include thread messages
+ */
+const activeBaseChats = (s: ChatStoreState): ChatMessage[] => {
   if (!s.activeId) return [];
 
-  return s.messages.map((i) => ({ ...i, meta: getMeta(i) }));
+  const messages = s.messagesMap[currentChatKey(s)] || [];
+
+  return messages.map((i) => ({ ...i, meta: getMeta(i) }));
 };
 
-const initTime = Date.now();
+/**
+ * 排除掉所有 tool 消息，在展示时需要使用
+ */
+const activeBaseChatsWithoutTool = (s: ChatStoreState) => {
+  const messages = activeBaseChats(s);
 
-const showInboxWelcome = (s: ChatStore): boolean => {
-  const isInbox = s.activeId === INBOX_SESSION_ID;
-  if (!isInbox) return false;
-  const data = currentChats(s);
-  const isBrandNewChat = data.length === 0;
-  return isBrandNewChat;
+  return messages.filter((m) => m.role !== 'tool');
 };
 
-// 针对新助手添加初始化时的自定义消息
-const currentChatsWithGuideMessage =
-  (meta: MetaData) =>
-  (s: ChatStore): ChatMessage[] => {
-    const data = currentChats(s);
+const getChatsWithThread = (s: ChatStoreState, messages: ChatMessage[]) => {
+  // 如果没有 activeThreadId，则返回所有的主消息
+  if (!s.activeThreadId) return messages.filter((m) => !m.threadId);
 
-    const isBrandNewChat = data.length === 0;
+  const thread = s.threadMaps[s.activeTopicId!]?.find((t) => t.id === s.activeThreadId);
 
-    if (!isBrandNewChat) return data;
+  if (!thread) return messages.filter((m) => !m.threadId);
 
-    const [activeId, isInbox] = [s.activeId, s.activeId === INBOX_SESSION_ID];
+  const sourceIndex = messages.findIndex((m) => m.id === thread.sourceMessageId);
+  const sliced = messages.slice(0, sourceIndex + 1);
 
-    const inboxMsg = '';
-    const agentSystemRoleMsg = t('agentDefaultMessageWithSystemRole', {
-      name: meta.title || t('defaultAgent'),
-      ns: 'chat',
-      systemRole: meta.description,
-    });
-    const agentMsg = t('agentDefaultMessage', {
-      id: activeId,
-      name: meta.title || t('defaultAgent'),
-      ns: 'chat',
-    });
-
-    const emptyInboxGuideMessage = {
-      content: isInbox ? inboxMsg : !!meta.description ? agentSystemRoleMsg : agentMsg,
-      createdAt: initTime,
-      extra: {},
-      id: 'default',
-      meta: merge({ avatar: DEFAULT_INBOX_AVATAR }, meta),
-      role: 'assistant',
-      updatedAt: initTime,
-    } as ChatMessage;
-
-    return [emptyInboxGuideMessage];
-  };
-
-const currentChatIDsWithGuideMessage = (s: ChatStore) => {
-  const meta = sessionMetaSelectors.currentAgentMeta(useSessionStore.getState());
-
-  return currentChatsWithGuideMessage(meta)(s).map((s) => s.id);
+  return [...sliced, ...messages.filter((m) => m.threadId === s.activeThreadId)];
 };
 
-const currentChatsWithHistoryConfig = (s: ChatStore): ChatMessage[] => {
-  const chats = currentChats(s);
-  const config = agentSelectors.currentAgentConfig(useAgentStore.getState());
+// ============= Main Display Chats ========== //
+// =========================================== //
+const mainDisplayChats = (s: ChatStoreState): ChatMessage[] => {
+  const displayChats = activeBaseChatsWithoutTool(s);
+
+  return getChatsWithThread(s, displayChats);
+};
+
+const mainDisplayChatIDs = (s: ChatStoreState) => mainDisplayChats(s).map((s) => s.id);
+
+const mainAIChats = (s: ChatStoreState): ChatMessage[] => {
+  const messages = activeBaseChats(s);
+
+  return getChatsWithThread(s, messages);
+};
+
+const mainAIChatsWithHistoryConfig = (s: ChatStoreState): ChatMessage[] => {
+  const chats = mainAIChats(s);
+  const config = agentSelectors.currentAgentChatConfig(useAgentStore.getState());
 
   return chatHelpers.getSlicedMessagesWithConfig(chats, config);
 };
 
-const chatsMessageString = (s: ChatStore): string => {
-  const chats = currentChatsWithHistoryConfig(s);
+const mainAIChatsMessageString = (s: ChatStoreState): string => {
+  const chats = mainAIChatsWithHistoryConfig(s);
   return chats.map((m) => m.content).join('');
 };
 
-const getFunctionMessageProps =
-  ({ plugin, content, id }: Pick<ChatMessage, 'plugin' | 'content' | 'id'>) =>
-  (s: ChatStore) => ({
-    arguments: plugin?.arguments,
-    command: plugin,
-    content,
-    id: plugin?.identifier,
-    loading: id === s.chatLoadingId,
-    type: plugin?.type as LobePluginType,
-  });
+const currentToolMessages = (s: ChatStoreState) => {
+  const messages = activeBaseChats(s);
 
-const getMessageById = (id: string) => (s: ChatStore) => chatHelpers.getMessageById(s.messages, id);
-const getTraceIdByMessageId = (id: string) => (s: ChatStore) => getMessageById(id)(s)?.traceId;
+  return messages.filter((m) => m.role === 'tool');
+};
 
-const latestMessage = (s: ChatStore) => currentChats(s).at(-1);
+const currentUserMessages = (s: ChatStoreState) => {
+  const messages = activeBaseChats(s);
 
-const currentChatLoadingState = (s: ChatStore) => !s.messagesInit;
+  return messages.filter((m) => m.role === 'user');
+};
+
+const currentUserFiles = (s: ChatStoreState) => {
+  const userMessages = currentUserMessages(s);
+
+  return userMessages
+    .filter((m) => m.fileList && m.fileList?.length > 0)
+    .flatMap((m) => m.fileList)
+    .filter(Boolean) as ChatFileItem[];
+};
+
+const showInboxWelcome = (s: ChatStoreState): boolean => {
+  const isInbox = s.activeId === INBOX_SESSION_ID;
+  if (!isInbox) return false;
+
+  const data = activeBaseChats(s);
+  return data.length === 0;
+};
+
+const getMessageById = (id: string) => (s: ChatStoreState) =>
+  chatHelpers.getMessageById(activeBaseChats(s), id);
+
+const countMessagesByThreadId = (id: string) => (s: ChatStoreState) => {
+  const messages = activeBaseChats(s).filter((m) => m.threadId === id);
+
+  return messages.length;
+};
+
+const getMessageByToolCallId = (id: string) => (s: ChatStoreState) => {
+  const messages = activeBaseChats(s);
+  return messages.find((m) => m.tool_call_id === id);
+};
+const getTraceIdByMessageId = (id: string) => (s: ChatStoreState) => getMessageById(id)(s)?.traceId;
+
+const latestMessage = (s: ChatStoreState) => activeBaseChats(s).at(-1);
+
+const currentChatLoadingState = (s: ChatStoreState) => !s.messagesInit;
+
+const isCurrentChatLoaded = (s: ChatStoreState) => !!s.messagesMap[currentChatKey(s)];
+
+const isMessageEditing = (id: string) => (s: ChatStoreState) => s.messageEditingIds.includes(id);
+const isMessageLoading = (id: string) => (s: ChatStoreState) => s.messageLoadingIds.includes(id);
+
+const isMessageGenerating = (id: string) => (s: ChatStoreState) => s.chatLoadingIds.includes(id);
+const isMessageInRAGFlow = (id: string) => (s: ChatStoreState) =>
+  s.messageRAGLoadingIds.includes(id);
+const isPluginApiInvoking = (id: string) => (s: ChatStoreState) =>
+  s.pluginApiLoadingIds.includes(id);
+
+const isToolCallStreaming = (id: string, index: number) => (s: ChatStoreState) => {
+  const isLoading = s.toolCallingStreamIds[id];
+
+  if (!isLoading) return false;
+
+  return isLoading[index];
+};
+
+const isAIGenerating = (s: ChatStoreState) =>
+  s.chatLoadingIds.some((id) => mainDisplayChatIDs(s).includes(id));
+const isInRAGFlow = (s: ChatStoreState) =>
+  s.messageRAGLoadingIds.some((id) => mainDisplayChatIDs(s).includes(id));
+
+const isCreatingMessage = (s: ChatStoreState) => s.isCreatingMessage;
+
+const isHasMessageLoading = (s: ChatStoreState) =>
+  s.messageLoadingIds.some((id) => mainDisplayChatIDs(s).includes(id));
+
+/**
+ * this function is used to determine whether the send button should be disabled
+ */
+const isSendButtonDisabledByMessage = (s: ChatStoreState) =>
+  // 1. when there is message loading
+  isHasMessageLoading(s) ||
+  // 2. when is creating the topic
+  s.creatingTopic ||
+  // 3. when is creating the message
+  isCreatingMessage(s) ||
+  // 4. when the message is in RAG flow
+  isInRAGFlow(s);
 
 export const chatSelectors = {
-  chatsMessageString,
-  currentChatIDsWithGuideMessage,
+  activeBaseChats,
+  activeBaseChatsWithoutTool,
+  countMessagesByThreadId,
   currentChatKey,
   currentChatLoadingState,
-  currentChats,
-  currentChatsWithGuideMessage,
-  currentChatsWithHistoryConfig,
-  getFunctionMessageProps,
+  currentToolMessages,
+  currentUserFiles,
   getMessageById,
+  getMessageByToolCallId,
   getTraceIdByMessageId,
+  isAIGenerating,
+  isCreatingMessage,
+  isCurrentChatLoaded,
+  isHasMessageLoading,
+  isMessageEditing,
+  isMessageGenerating,
+  isMessageInRAGFlow,
+  isMessageLoading,
+  isPluginApiInvoking,
+  isSendButtonDisabledByMessage,
+  isToolCallStreaming,
   latestMessage,
+  mainAIChats,
+  mainAIChatsMessageString,
+  mainAIChatsWithHistoryConfig,
+  mainDisplayChatIDs,
+  mainDisplayChats,
   showInboxWelcome,
 };

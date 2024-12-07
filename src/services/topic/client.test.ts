@@ -1,18 +1,20 @@
 import { Mock, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { CreateTopicParams, TopicModel } from '@/database/client/models/topic';
+import { SessionModel } from '@/database/_deprecated/models/session';
+import { CreateTopicParams, TopicModel } from '@/database/_deprecated/models/topic';
 import { ChatTopic } from '@/types/topic';
 
 import { ClientService } from './client';
 
 const topicService = new ClientService();
 // Mock the TopicModel
-vi.mock('@/database/client/models/topic', () => {
+vi.mock('@/database/_deprecated/models/topic', () => {
   return {
     TopicModel: {
       create: vi.fn(),
       query: vi.fn(),
       delete: vi.fn(),
+      count: vi.fn(),
       batchDeleteBySessionId: vi.fn(),
       batchDelete: vi.fn(),
       clearTable: vi.fn(),
@@ -212,6 +214,32 @@ describe('TopicService', () => {
       // Assert
       expect(TopicModel.queryByKeyword).toHaveBeenCalledWith(keyword, undefined);
       expect(result).toBe(mockTopics);
+    });
+  });
+
+  describe('countTopics', () => {
+    it('should return false if no topics exist', async () => {
+      // Setup
+      (TopicModel.count as Mock).mockResolvedValue(0);
+
+      // Execute
+      const result = await topicService.countTopics();
+
+      // Assert
+      expect(TopicModel.count).toHaveBeenCalled();
+      expect(result).toBe(0);
+    });
+
+    it('should return true if topics exist', async () => {
+      // Setup
+      (TopicModel.count as Mock).mockResolvedValue(1);
+
+      // Execute
+      const result = await topicService.countTopics();
+
+      // Assert
+      expect(TopicModel.count).toHaveBeenCalled();
+      expect(result).toBe(1);
     });
   });
 });

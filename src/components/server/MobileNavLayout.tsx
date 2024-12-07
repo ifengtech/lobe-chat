@@ -11,11 +11,13 @@ const MobileContentLayout = ({
   withNav,
   style,
   header,
+  id = 'lobe-mobile-scroll-container',
   ...rest
 }: MobileContentLayoutProps) => {
   const content = (
     <Flexbox
       height="100%"
+      id={id}
       style={{
         overflowX: 'hidden',
         overflowY: 'auto',
@@ -38,6 +40,7 @@ const MobileContentLayout = ({
       {header}
       <Flexbox
         height="100%"
+        id={'lobe-mobile-scroll-container'}
         style={{
           overflowX: 'hidden',
           overflowY: 'auto',

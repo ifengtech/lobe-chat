@@ -2,6 +2,7 @@ import { Schema, ValidationResult } from '@cfworker/json-schema';
 import useSWR, { SWRResponse } from 'swr';
 import { StateCreator } from 'zustand/vanilla';
 
+import { MESSAGE_CANCEL_FLAT } from '@/const/message';
 import { pluginService } from '@/services/plugin';
 import { merge } from '@/utils/merge';
 
@@ -45,16 +46,22 @@ export const createPluginSlice: StateCreator<
     await get().refreshPlugins();
   },
   updatePluginSettings: async (id, settings) => {
-    const previousSettings = pluginSelectors.getPluginSettingsById(id)(get());
+    const signal = get().updatePluginSettingsSignal;
+    if (signal) signal.abort(MESSAGE_CANCEL_FLAT);
 
+    const newSignal = new AbortController();
+
+    const previousSettings = pluginSelectors.getPluginSettingsById(id)(get());
     const nextSettings = merge(previousSettings, settings);
-    await pluginService.updatePluginSettings(id, nextSettings);
+
+    set({ updatePluginSettingsSignal: newSignal }, false, 'create new Signal');
+    await pluginService.updatePluginSettings(id, nextSettings, newSignal.signal);
 
     await get().refreshPlugins();
   },
   useCheckPluginsIsInstalled: (plugins) => useSWR(plugins, get().checkPluginsIsInstalled),
   validatePluginSettings: async (identifier) => {
-    const manifest = pluginSelectors.getPluginManifestById(identifier)(get());
+    const manifest = pluginSelectors.getToolManifestById(identifier)(get());
     if (!manifest || !manifest.settings) return;
     const settings = pluginSelectors.getPluginSettingsById(identifier)(get());
 

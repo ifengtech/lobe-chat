@@ -1,23 +1,9 @@
 import { Metadata } from 'next';
 
-import { getCanonicalUrl } from '@/const/url';
-
-import Client from './(loading)/Client';
-import Redirect from './(loading)/Redirect';
-
-const Page = () => {
-  return (
-    <>
-      <Client />
-      <Redirect />
-    </>
-  );
-};
-
-Page.displayName = 'Loading';
-
-export default Page;
+import { getCanonicalUrl } from '@/server/utils/url';
 
 export const metadata: Metadata = {
   alternates: { canonical: getCanonicalUrl('/') },
 };
+
+export { default } from '@/app/loading';

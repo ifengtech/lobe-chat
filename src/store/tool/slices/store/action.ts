@@ -1,4 +1,4 @@
-import { LobeChatPluginsMarketIndex } from '@lobehub/chat-plugin-sdk';
+import { LobeChatPluginMeta } from '@lobehub/chat-plugin-sdk';
 import { t } from 'i18next';
 import { produce } from 'immer';
 import useSWR, { SWRResponse, mutate } from 'swr';
@@ -22,13 +22,13 @@ const INSTALLED_PLUGINS = 'loadInstalledPlugins';
 export interface PluginStoreAction {
   installPlugin: (identifier: string, type?: 'plugin' | 'customPlugin') => Promise<void>;
   installPlugins: (plugins: string[]) => Promise<void>;
-  loadPluginStore: () => Promise<LobeChatPluginsMarketIndex>;
+  loadPluginStore: () => Promise<LobeChatPluginMeta[]>;
   refreshPlugins: () => Promise<void>;
   uninstallPlugin: (identifier: string) => Promise<void>;
 
   updateInstallLoadingState: (key: string, value: boolean | undefined) => void;
   useFetchInstalledPlugins: () => SWRResponse<LobeTool[]>;
-  useFetchPluginStore: () => SWRResponse<LobeChatPluginsMarketIndex>;
+  useFetchPluginStore: () => SWRResponse<LobeChatPluginMeta[]>;
 }
 
 export const createPluginStoreSlice: StateCreator<
@@ -44,12 +44,13 @@ export const createPluginStoreSlice: StateCreator<
     const { updateInstallLoadingState, refreshPlugins } = get();
     try {
       updateInstallLoadingState(name, true);
-      const data = await toolService.getPluginManifest(plugin.manifest);
-      updateInstallLoadingState(name, undefined);
+      const data = await toolService.getToolManifest(plugin.manifest);
 
       // 4. 存储 manifest 信息
       await pluginService.installPlugin({ identifier: plugin.identifier, manifest: data, type });
       await refreshPlugins();
+
+      updateInstallLoadingState(name, undefined);
     } catch (error) {
       console.error(error);
       updateInstallLoadingState(name, undefined);
@@ -67,9 +68,9 @@ export const createPluginStoreSlice: StateCreator<
     await Promise.all(plugins.map((identifier) => installPlugin(identifier)));
   },
   loadPluginStore: async () => {
-    const pluginMarketIndex = await toolService.getPluginList();
+    const pluginMarketIndex = await toolService.getToolList();
 
-    set({ pluginStoreList: pluginMarketIndex.plugins }, false, n('loadPluginList'));
+    set({ pluginStoreList: pluginMarketIndex }, false, n('loadPluginList'));
 
     return pluginMarketIndex;
   },
@@ -91,6 +92,7 @@ export const createPluginStoreSlice: StateCreator<
   },
   useFetchInstalledPlugins: () =>
     useSWR<LobeTool[]>(INSTALLED_PLUGINS, pluginService.getInstalledPlugins, {
+      fallbackData: [],
       onSuccess: (data) => {
         set(
           { installedPlugins: data, loadingInstallPlugins: false },
@@ -99,7 +101,12 @@ export const createPluginStoreSlice: StateCreator<
         );
       },
       revalidateOnFocus: false,
+      suspense: true,
     }),
   useFetchPluginStore: () =>
-    useSWR<LobeChatPluginsMarketIndex>('loadPluginStore', get().loadPluginStore),
+    useSWR<LobeChatPluginMeta[]>('loadPluginStore', get().loadPluginStore, {
+      fallbackData: [],
+      revalidateOnFocus: false,
+      suspense: true,
+    }),
 });

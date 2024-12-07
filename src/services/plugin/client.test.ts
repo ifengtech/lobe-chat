@@ -1,18 +1,19 @@
 import { LobeChatPluginManifest } from '@lobehub/chat-plugin-sdk';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { PluginModel } from '@/database/client/models/plugin';
-import { DB_Plugin } from '@/database/client/schemas/plugin';
+import { PluginModel } from '@/database/_deprecated/models/plugin';
+import { DB_Plugin } from '@/database/_deprecated/schemas/plugin';
 import { LobeTool } from '@/types/tool';
 import { LobeToolCustomPlugin } from '@/types/tool/plugin';
 
-import { ClientService, InstallPluginParams } from './client';
+import { ClientService } from './client';
+import { InstallPluginParams } from './type';
 
 const pluginService = new ClientService();
 
 // Mocking modules and functions
 
-vi.mock('@/database/client/models/plugin', () => ({
+vi.mock('@/database/_deprecated/models/plugin', () => ({
   PluginModel: {
     getList: vi.fn(),
     create: vi.fn(),
@@ -110,7 +111,7 @@ describe('PluginService', () => {
 
       // Assert
       expect(PluginModel.update).toHaveBeenCalledWith(id, value);
-      expect(result).toEqual(1);
+      expect(result).toEqual(undefined);
     });
   });
 
@@ -126,7 +127,7 @@ describe('PluginService', () => {
 
       // Assert
       expect(PluginModel.update).toHaveBeenCalledWith(id, { manifest });
-      expect(result).toEqual(1);
+      expect(result).toEqual(undefined);
     });
   });
 
@@ -149,14 +150,13 @@ describe('PluginService', () => {
       // Arrange
       const id = 'plugin-id';
       const settings = { color: 'blue' };
-      vi.mocked(PluginModel.update).mockResolvedValue(1);
 
       // Act
       const result = await pluginService.updatePluginSettings(id, settings);
 
       // Assert
       expect(PluginModel.update).toHaveBeenCalledWith(id, { settings });
-      expect(result).toEqual(1);
+      expect(result).toEqual(undefined);
     });
   });
 });

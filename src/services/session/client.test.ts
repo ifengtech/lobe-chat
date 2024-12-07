@@ -1,7 +1,7 @@
 import { Mock, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { SessionModel } from '@/database/client/models/session';
-import { SessionGroupModel } from '@/database/client/models/sessionGroup';
+import { SessionModel } from '@/database/_deprecated/models/session';
+import { SessionGroupModel } from '@/database/_deprecated/models/sessionGroup';
 import { LobeAgentConfig } from '@/types/agent';
 import { LobeAgentSession, LobeSessionType, SessionGroups } from '@/types/session';
 
@@ -10,7 +10,7 @@ import { ClientService } from './client';
 const sessionService = new ClientService();
 
 // Mock the SessionModel
-vi.mock('@/database/client/models/session', () => {
+vi.mock('@/database/_deprecated/models/session', () => {
   return {
     SessionModel: {
       create: vi.fn(),
@@ -20,6 +20,7 @@ vi.mock('@/database/client/models/session', () => {
       update: vi.fn(),
       count: vi.fn(),
       batchCreate: vi.fn(),
+      findById: vi.fn(),
       isEmpty: vi.fn(),
       queryByKeyword: vi.fn(),
       updateConfig: vi.fn(),
@@ -32,7 +33,7 @@ vi.mock('@/database/client/models/session', () => {
 });
 
 // Mock the SessionGroupModel
-vi.mock('@/database/client/models/sessionGroup', () => {
+vi.mock('@/database/_deprecated/models/sessionGroup', () => {
   return {
     SessionGroupModel: {
       create: vi.fn(),
@@ -205,7 +206,7 @@ describe('SessionService', () => {
   describe('updateSessionConfig', () => {
     it('should update the config of a session', async () => {
       // Setup
-      const newConfig = { compressThreshold: 2 } as LobeAgentConfig;
+      const newConfig = { model: 'abc' } as LobeAgentConfig;
       (SessionModel.updateConfig as Mock).mockResolvedValue({ ...mockSession, config: newConfig });
 
       // Execute

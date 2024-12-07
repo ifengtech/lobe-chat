@@ -5,8 +5,19 @@ import { AsyncLocalStorage } from '@/utils/localStorage';
 
 export enum SidebarTabKey {
   Chat = 'chat',
-  Market = 'market',
+  Discover = 'discover',
+  Files = 'files',
+  Me = 'me',
   Setting = 'settings',
+}
+
+export enum ChatSettingsTabs {
+  Chat = 'chat',
+  Meta = 'meta',
+  Modal = 'modal',
+  Plugin = 'plugin',
+  Prompt = 'prompt',
+  TTS = 'tts',
 }
 
 export enum SettingsTabs {
@@ -15,49 +26,59 @@ export enum SettingsTabs {
   Common = 'common',
   LLM = 'llm',
   Sync = 'sync',
+  SystemAgent = 'system-agent',
   TTS = 'tts',
 }
 
-export interface GlobalPreference {
+export interface SystemStatus {
   // which sessionGroup should expand
   expandSessionGroupKeys: string[];
+  filePanelWidth: number;
+  hidePWAInstaller?: boolean;
+  hideThreadLimitAlert?: boolean;
   inputHeight: number;
+  mobileShowPortal?: boolean;
   mobileShowTopic?: boolean;
   sessionsWidth: number;
   showChatSideBar?: boolean;
+  showFilePanel?: boolean;
   showSessionPanel?: boolean;
   showSystemRole?: boolean;
+  threadInputHeight: number;
+  zenMode?: boolean;
 }
 
-export interface GlobalPreferenceState {
-  /**
-   * the user preference, which only store in local storage
-   */
-  preference: GlobalPreference;
-  preferenceStorage: AsyncLocalStorage<GlobalPreference>;
-}
-
-export interface GlobalCommonState {
+export interface GlobalState {
   hasNewVersion?: boolean;
   isMobile?: boolean;
+  isStatusInit?: boolean;
   latestVersion?: string;
   router?: AppRouterInstance;
   sidebarKey: SidebarTabKey;
+  status: SystemStatus;
+  statusStorage: AsyncLocalStorage<SystemStatus>;
 }
 
-export type GlobalState = GlobalCommonState & GlobalPreferenceState;
+export const INITIAL_STATUS = {
+  expandSessionGroupKeys: [SessionDefaultGroup.Pinned, SessionDefaultGroup.Default],
+  filePanelWidth: 320,
+  hidePWAInstaller: false,
+  hideThreadLimitAlert: false,
+  inputHeight: 200,
+  mobileShowTopic: false,
+  sessionsWidth: 320,
+  showChatSideBar: true,
+  showFilePanel: true,
+  showSessionPanel: true,
+  showSystemRole: false,
+  threadInputHeight: 200,
+  zenMode: false,
+} satisfies SystemStatus;
 
 export const initialState: GlobalState = {
   isMobile: false,
-  preference: {
-    expandSessionGroupKeys: [SessionDefaultGroup.Pinned, SessionDefaultGroup.Default],
-    inputHeight: 200,
-    mobileShowTopic: false,
-    sessionsWidth: 320,
-    showChatSideBar: true,
-    showSessionPanel: true,
-    showSystemRole: false,
-  },
-  preferenceStorage: new AsyncLocalStorage('LOBE_GLOBAL_PREFERENCE'),
+  isStatusInit: false,
   sidebarKey: SidebarTabKey.Chat,
+  status: INITIAL_STATUS,
+  statusStorage: new AsyncLocalStorage('LOBE_SYSTEM_STATUS'),
 };

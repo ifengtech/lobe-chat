@@ -1,52 +1,35 @@
-import isEqual from 'fast-deep-equal';
-import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
-import { Flexbox } from 'react-layout-kit';
+'use client';
+
+import { Icon } from '@lobehub/ui';
+import { useTheme } from 'antd-style';
+import { Loader2Icon } from 'lucide-react';
+import React, { ReactNode, memo, useCallback, useEffect, useRef, useState } from 'react';
+import { Center, Flexbox } from 'react-layout-kit';
 import { Virtuoso, VirtuosoHandle } from 'react-virtuoso';
 
+import { isServerMode } from '@/const/version';
 import { useChatStore } from '@/store/chat';
 import { chatSelectors } from '@/store/chat/selectors';
-import { isMobileScreen } from '@/utils/screen';
 
-import { useInitConversation } from '../../hooks/useInitConversation';
 import AutoScroll from '../AutoScroll';
-import Item from '../ChatItem';
-import InboxWelcome from '../InboxWelcome';
 import SkeletonList from '../SkeletonList';
 
-const WELCOME_ID = 'welcome';
-
-const itemContent = (index: number, id: string) => {
-  const isMobile = isMobileScreen();
-
-  if (id === WELCOME_ID) return <InboxWelcome />;
-
-  return index === 0 ? (
-    <div style={{ height: 24 + (isMobile ? 0 : 64) }} />
-  ) : (
-    <Item id={id} index={index - 1} />
-  );
-};
-
 interface VirtualizedListProps {
+  dataSource: string[];
+  itemContent: (index: number, data: any, context: any) => ReactNode;
   mobile?: boolean;
 }
-const VirtualizedList = memo<VirtualizedListProps>(({ mobile }) => {
-  useInitConversation();
 
+const VirtualizedList = memo<VirtualizedListProps>(({ mobile, dataSource, itemContent }) => {
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [atBottom, setAtBottom] = useState(true);
   const [isScrolling, setIsScrolling] = useState(false);
 
-  const [id, chatLoading] = useChatStore((s) => [
+  const [id, isFirstLoading, isCurrentChatLoaded] = useChatStore((s) => [
     chatSelectors.currentChatKey(s),
     chatSelectors.currentChatLoadingState(s),
+    chatSelectors.isCurrentChatLoaded(s),
   ]);
-
-  const data = useChatStore((s) => {
-    const showInboxWelcome = chatSelectors.showInboxWelcome(s);
-    const ids = showInboxWelcome ? [WELCOME_ID] : chatSelectors.currentChatIDsWithGuideMessage(s);
-    return ['empty', ...ids];
-  }, isEqual);
 
   useEffect(() => {
     if (virtuosoRef.current) {
@@ -54,29 +37,47 @@ const VirtualizedList = memo<VirtualizedListProps>(({ mobile }) => {
     }
   }, [id]);
 
-  const prevDataLengthRef = useRef(data.length);
+  const prevDataLengthRef = useRef(dataSource.length);
 
   const getFollowOutput = useCallback(() => {
-    const newFollowOutput = data.length > prevDataLengthRef.current ? 'auto' : false;
-    prevDataLengthRef.current = data.length;
+    const newFollowOutput = dataSource.length > prevDataLengthRef.current ? 'auto' : false;
+    prevDataLengthRef.current = dataSource.length;
     return newFollowOutput;
-  }, [data.length]);
+  }, [dataSource.length]);
 
-  // overscan should be 1.5 times the height of the window
-  const overscan = typeof window !== 'undefined' ? window.innerHeight * 1.5 : 0;
+  const theme = useTheme();
+  // overscan should be 3 times the height of the window
+  const overscan = typeof window !== 'undefined' ? window.innerHeight * 3 : 0;
 
-  return chatLoading ? (
-    <SkeletonList mobile={mobile} />
-  ) : (
+  // first time loading or not loaded
+  if (isFirstLoading) return <SkeletonList mobile={mobile} />;
+
+  if (!isCurrentChatLoaded)
+    // use skeleton list when not loaded in server mode due to the loading duration is much longer than client mode
+    return isServerMode ? (
+      <SkeletonList mobile={mobile} />
+    ) : (
+      // in client mode and switch page, using the center loading for smooth transition
+      <Center height={'100%'} width={'100%'}>
+        <Icon
+          icon={Loader2Icon}
+          size={{ fontSize: 32 }}
+          spin
+          style={{ color: theme.colorTextTertiary }}
+        />
+      </Center>
+    );
+
+  return (
     <Flexbox height={'100%'}>
       <Virtuoso
         atBottomStateChange={setAtBottom}
         atBottomThreshold={50 * (mobile ? 2 : 1)}
         computeItemKey={(_, item) => item}
-        data={data}
+        data={dataSource}
         followOutput={getFollowOutput}
-        // increaseViewportBy={overscan}
-        initialTopMostItemIndex={data?.length - 1}
+        increaseViewportBy={overscan}
+        initialTopMostItemIndex={dataSource?.length - 1}
         isScrolling={setIsScrolling}
         itemContent={itemContent}
         overscan={overscan}

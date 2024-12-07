@@ -1,4 +1,4 @@
-import { TopicModel } from '@/database/client/models/topic';
+import { TopicModel } from '@/database/_deprecated/models/topic';
 import { ChatTopic } from '@/types/topic';
 
 import { CreateTopicParams, ITopicService, QueryTopicParams } from './type';
@@ -32,6 +32,10 @@ export class ClientService implements ITopicService {
 
   async getAllTopics() {
     return TopicModel.queryAll();
+  }
+
+  async countTopics() {
+    return TopicModel.count();
   }
 
   async updateTopicFavorite(id: string, favorite?: boolean) {

@@ -1,10 +1,11 @@
+import { ModelTag } from '@lobehub/icons';
 import { memo } from 'react';
 import { Flexbox } from 'react-layout-kit';
 
-import ModelTag from '@/components/ModelTag';
 import { useAgentStore } from '@/store/agent';
 import { agentSelectors } from '@/store/agent/slices/chat';
 import { useChatStore } from '@/store/chat';
+import { chatSelectors } from '@/store/chat/selectors';
 import { ChatMessage } from '@/types/message';
 
 import { RenderMessageExtra } from '../types';
@@ -15,7 +16,7 @@ import Translate from './Translate';
 export const AssistantMessageExtra: RenderMessageExtra = memo<ChatMessage>(
   ({ extra, id, content }) => {
     const model = useAgentStore(agentSelectors.currentAgentModel);
-    const loading = useChatStore((s) => s.chatLoadingId === id);
+    const loading = useChatStore(chatSelectors.isMessageGenerating(id));
 
     const showModelTag = extra?.fromModel && model !== extra?.fromModel;
     const showTranslate = !!extra?.translate;

@@ -1,10 +1,21 @@
-import { Content, GoogleGenerativeAI, Part } from '@google/generative-ai';
-import { GoogleGenerativeAIStream, StreamingTextResponse } from 'ai';
+import {
+  Content,
+  FunctionCallPart,
+  FunctionDeclaration,
+  Tool as GoogleFunctionCallTool,
+  GoogleGenerativeAI,
+  Part,
+  SchemaType,
+} from '@google/generative-ai';
+
+import { imageUrlToBase64 } from '@/utils/imageToBase64';
+import { safeParseJSON } from '@/utils/safeParseJSON';
 
 import { LobeRuntimeAI } from '../BaseAI';
 import { AgentRuntimeErrorType, ILobeAgentRuntimeErrorType } from '../error';
 import {
   ChatCompetitionOptions,
+  ChatCompletionTool,
   ChatStreamPayload,
   OpenAIChatMessage,
   UserMessageContentPart,
@@ -12,6 +23,8 @@ import {
 import { ModelProvider } from '../types/type';
 import { AgentRuntimeError } from '../utils/createError';
 import { debugStream } from '../utils/debugStream';
+import { StreamingResponse } from '../utils/response';
+import { GoogleGenerativeAIStream, convertIterableToStream } from '../utils/streams';
 import { parseDataUri } from '../utils/uriParser';
 
 enum HarmCategory {
@@ -29,20 +42,21 @@ export class LobeGoogleAI implements LobeRuntimeAI {
   private client: GoogleGenerativeAI;
   baseURL?: string;
 
-  constructor({ apiKey, baseURL }: { apiKey?: string; baseURL?: string }) {
-    if (!apiKey) throw AgentRuntimeError.createError(AgentRuntimeErrorType.InvalidGoogleAPIKey);
+  constructor({ apiKey, baseURL }: { apiKey?: string; baseURL?: string } = {}) {
+    if (!apiKey) throw AgentRuntimeError.createError(AgentRuntimeErrorType.InvalidProviderAPIKey);
 
     this.client = new GoogleGenerativeAI(apiKey);
     this.baseURL = baseURL;
   }
 
-  async chat(payload: ChatStreamPayload, options?: ChatCompetitionOptions) {
+  async chat(rawPayload: ChatStreamPayload, options?: ChatCompetitionOptions) {
     try {
-      const model = this.convertModel(payload.model, payload.messages);
+      const payload = this.buildPayload(rawPayload);
+      const model = payload.model;
 
-      const contents = this.buildGoogleMessages(payload.messages, model);
+      const contents = await this.buildGoogleMessages(payload.messages, model);
 
-      const geminiStream = await this.client
+      const geminiStreamResult = await this.client
         .getGenerativeModel(
           {
             generationConfig: {
@@ -74,19 +88,24 @@ export class LobeGoogleAI implements LobeRuntimeAI {
           },
           { apiVersion: 'v1beta', baseUrl: this.baseURL },
         )
-        .generateContentStream({ contents });
+        .generateContentStream({
+          contents,
+          systemInstruction: payload.system as string,
+          tools: this.buildGoogleTools(payload.tools),
+        });
 
-      // Convert the response into a friendly text-stream
-      const stream = GoogleGenerativeAIStream(geminiStream, options?.callback);
-
-      const [debug, output] = stream.tee();
+      const googleStream = convertIterableToStream(geminiStreamResult.stream);
+      const [prod, useForDebug] = googleStream.tee();
 
       if (process.env.DEBUG_GOOGLE_CHAT_COMPLETION === '1') {
-        debugStream(debug).catch(console.error);
+        debugStream(useForDebug).catch();
       }
 
+      // Convert the response into a friendly text-stream
+      const stream = GoogleGenerativeAIStream(prod, options?.callback);
+
       // Respond with the stream
-      return new StreamingTextResponse(output, { headers: options?.headers });
+      return StreamingResponse(stream, { headers: options?.headers });
     } catch (e) {
       const err = e as Error;
 
@@ -96,94 +115,121 @@ export class LobeGoogleAI implements LobeRuntimeAI {
     }
   }
 
-  private convertContentToGooglePart = (content: UserMessageContentPart): Part => {
+  private buildPayload(payload: ChatStreamPayload) {
+    const system_message = payload.messages.find((m) => m.role === 'system');
+    const user_messages = payload.messages.filter((m) => m.role !== 'system');
+
+    return {
+      ...payload,
+      messages: user_messages,
+      system: system_message?.content,
+    };
+  }
+  private convertContentToGooglePart = async (content: UserMessageContentPart): Promise<Part> => {
     switch (content.type) {
       case 'text': {
         return { text: content.text };
       }
       case 'image_url': {
-        const { mimeType, base64 } = parseDataUri(content.image_url.url);
+        const { mimeType, base64, type } = parseDataUri(content.image_url.url);
 
-        if (!base64) {
-          throw new TypeError("Image URL doesn't contain base64 data");
+        if (type === 'base64') {
+          if (!base64) {
+            throw new TypeError("Image URL doesn't contain base64 data");
+          }
+
+          return {
+            inlineData: {
+              data: base64,
+              mimeType: mimeType || 'image/png',
+            },
+          };
         }
 
-        return {
-          inlineData: {
-            data: base64,
-            mimeType: mimeType || 'image/png',
-          },
-        };
+        if (type === 'url') {
+          const { base64, mimeType } = await imageUrlToBase64(content.image_url.url);
+
+          return {
+            inlineData: {
+              data: base64,
+              mimeType,
+            },
+          };
+        }
+
+        throw new TypeError(`currently we don't support image url: ${content.image_url.url}`);
       }
     }
   };
 
-  private convertOAIMessagesToGoogleMessage = (message: OpenAIChatMessage): Content => {
+  private convertOAIMessagesToGoogleMessage = async (
+    message: OpenAIChatMessage,
+  ): Promise<Content> => {
     const content = message.content as string | UserMessageContentPart[];
+    if (!!message.tool_calls) {
+      return {
+        parts: message.tool_calls.map<FunctionCallPart>((tool) => ({
+          functionCall: {
+            args: safeParseJSON(tool.function.arguments)!,
+            name: tool.function.name,
+          },
+        })),
+        role: 'function',
+      };
+    }
 
     return {
       parts:
         typeof content === 'string'
           ? [{ text: content }]
-          : content.map((c) => this.convertContentToGooglePart(c)),
+          : await Promise.all(content.map(async (c) => await this.convertContentToGooglePart(c))),
       role: message.role === 'assistant' ? 'model' : 'user',
     };
   };
 
-  // convert messages from the Vercel AI SDK Format to the format
-  // that is expected by the Google GenAI SDK
-  private buildGoogleMessages = (messages: OpenAIChatMessage[], model: string): Content[] => {
-    // if the model is gemini-1.5-pro-latest, we don't need any special handling
-    if (model === 'gemini-1.5-pro-latest') {
-      return messages
-        .filter((message) => message.role !== 'function')
-        .map((msg) => this.convertOAIMessagesToGoogleMessage(msg));
-    }
+  // convert messages from the OpenAI format to Google GenAI SDK
+  private buildGoogleMessages = async (
+    messages: OpenAIChatMessage[],
+    model: string,
+  ): Promise<Content[]> => {
+    // if the model is gemini-1.0 we need to pair messages
+    if (model.startsWith('gemini-1.0')) {
+      const contents: Content[] = [];
+      let lastRole = 'model';
 
-    const contents: Content[] = [];
-    let lastRole = 'model';
+      for (const message of messages) {
+        // current to filter function message
+        if (message.role === 'function') {
+          continue;
+        }
+        const googleMessage = await this.convertOAIMessagesToGoogleMessage(message);
 
-    messages.forEach((message) => {
-      // current to filter function message
-      if (message.role === 'function') {
-        return;
+        // if the last message is a model message and the current message is a model message
+        // then we need to add a user message to separate them
+        if (lastRole === googleMessage.role) {
+          contents.push({ parts: [{ text: '' }], role: lastRole === 'user' ? 'model' : 'user' });
+        }
+
+        // add the current message to the contents
+        contents.push(googleMessage);
+
+        // update the last role
+        lastRole = googleMessage.role;
       }
-      const googleMessage = this.convertOAIMessagesToGoogleMessage(message);
 
-      // if the last message is a model message and the current message is a model message
-      // then we need to add a user message to separate them
-      if (lastRole === googleMessage.role) {
-        contents.push({ parts: [{ text: '' }], role: lastRole === 'user' ? 'model' : 'user' });
+      // if the last message is a user message, then we need to add a model message to separate them
+      if (lastRole === 'model') {
+        contents.push({ parts: [{ text: '' }], role: 'user' });
       }
 
-      // add the current message to the contents
-      contents.push(googleMessage);
-
-      // update the last role
-      lastRole = googleMessage.role;
-    });
-
-    // if the last message is a user message, then we need to add a model message to separate them
-    if (lastRole === 'model') {
-      contents.push({ parts: [{ text: '' }], role: 'user' });
+      return contents;
     }
 
-    return contents;
-  };
+    const pools = messages
+      .filter((message) => message.role !== 'function')
+      .map(async (msg) => await this.convertOAIMessagesToGoogleMessage(msg));
 
-  private convertModel = (model: string, messages: OpenAIChatMessage[]) => {
-    let finalModel: string = model;
-
-    if (model.includes('pro-vision')) {
-      // if message are all text message, use vision will return an error:
-      // "[400 Bad Request] Add an image to use models/gemini-pro-vision, or switch your model to a text model."
-      const noNeedVision = messages.every((m) => typeof m.content === 'string');
-
-      // so we need to downgrade to gemini-pro
-      if (noNeedVision) finalModel = 'gemini-pro';
-    }
-
-    return finalModel;
+    return Promise.all(pools);
   };
 
   private parseErrorMessage(message: string): {
@@ -192,7 +238,7 @@ export class LobeGoogleAI implements LobeRuntimeAI {
   } {
     const defaultError = {
       error: { message },
-      errorType: AgentRuntimeErrorType.GoogleBizError,
+      errorType: AgentRuntimeErrorType.ProviderBizError,
     };
 
     if (message.includes('location is not supported'))
@@ -214,11 +260,11 @@ export class LobeGoogleAI implements LobeRuntimeAI {
 
       switch (bizError.reason) {
         case 'API_KEY_INVALID': {
-          return { ...defaultError, errorType: AgentRuntimeErrorType.InvalidGoogleAPIKey };
+          return { ...defaultError, errorType: AgentRuntimeErrorType.InvalidProviderAPIKey };
         }
 
         default: {
-          return { error: json, errorType: AgentRuntimeErrorType.GoogleBizError };
+          return { error: json, errorType: AgentRuntimeErrorType.ProviderBizError };
         }
       }
     } catch {
@@ -226,6 +272,34 @@ export class LobeGoogleAI implements LobeRuntimeAI {
       return defaultError;
     }
   }
+
+  private buildGoogleTools(
+    tools: ChatCompletionTool[] | undefined,
+  ): GoogleFunctionCallTool[] | undefined {
+    if (!tools || tools.length === 0) return;
+
+    return [
+      {
+        functionDeclarations: tools.map((tool) => this.convertToolToGoogleTool(tool)),
+      },
+    ];
+  }
+
+  private convertToolToGoogleTool = (tool: ChatCompletionTool): FunctionDeclaration => {
+    const functionDeclaration = tool.function;
+    const parameters = functionDeclaration.parameters;
+
+    return {
+      description: functionDeclaration.description,
+      name: functionDeclaration.name,
+      parameters: {
+        description: parameters?.description,
+        properties: parameters?.properties,
+        required: parameters?.required,
+        type: SchemaType.OBJECT,
+      },
+    };
+  };
 }
 
 export default LobeGoogleAI;

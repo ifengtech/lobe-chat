@@ -1,3 +1,5 @@
+'use client';
+
 import { CheckCircleFilled } from '@ant-design/icons';
 import { Alert, Highlighter } from '@lobehub/ui';
 import { Button } from 'antd';
@@ -8,6 +10,7 @@ import { Flexbox } from 'react-layout-kit';
 
 import { TraceNameMap } from '@/const/trace';
 import { useIsMobile } from '@/hooks/useIsMobile';
+import { useProviderName } from '@/hooks/useProviderName';
 import { chatService } from '@/services/chat';
 import { ChatMessageError } from '@/types/message';
 
@@ -18,6 +21,7 @@ interface ConnectionCheckerProps {
 
 const Error = memo<{ error: ChatMessageError }>(({ error }) => {
   const { t } = useTranslation('error');
+  const providerName = useProviderName(error.body?.provider);
 
   return (
     <Flexbox gap={8} style={{ maxWidth: '600px', width: '100%' }}>
@@ -30,7 +34,7 @@ const Error = memo<{ error: ChatMessageError }>(({ error }) => {
             </Highlighter>
           </Flexbox>
         }
-        message={t(`response.${error.type}` as any)}
+        message={t(`response.${error.type}` as any, { provider: providerName })}
         showIcon
         type={'error'}
       />
@@ -48,10 +52,26 @@ const Checker = memo<ConnectionCheckerProps>(({ model, provider }) => {
   const [error, setError] = useState<ChatMessageError | undefined>();
 
   const checkConnection = async () => {
-    const data = await chatService.fetchPresetTaskResult({
+    let isError = false;
+
+    await chatService.fetchPresetTaskResult({
       onError: (_, rawError) => {
         setError(rawError);
         setPass(false);
+        isError = true;
+      },
+      onFinish: async (value) => {
+        if (!isError && value) {
+          setError(undefined);
+          setPass(true);
+        } else {
+          setPass(false);
+          setError({
+            body: value,
+            message: t('response.ConnectionCheckFailed', { ns: 'error' }),
+            type: 'ConnectionCheckFailed',
+          });
+        }
       },
       onLoadingChange: (loading) => {
         setLoading(loading);
@@ -72,11 +92,6 @@ const Checker = memo<ConnectionCheckerProps>(({ model, provider }) => {
         traceName: TraceNameMap.ConnectivityChecker,
       },
     });
-
-    if (data) {
-      setError(undefined);
-      setPass(true);
-    }
   };
   const isMobile = useIsMobile();
 
